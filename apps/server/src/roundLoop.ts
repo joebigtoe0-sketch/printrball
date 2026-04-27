@@ -123,6 +123,7 @@ export async function executeDraw(): Promise<void> {
   } else {
     claimTx = `MOCKCLAIM_${roundId}_${Date.now()}`;
     payoutTx = `MOCKPAYOUT_${roundId}_${Date.now()}`;
+    prizeAmount = appState.estimatedPrize.amount || config.mockPrizeLamports;
   }
 
   const completed: HistoricalRound = {
@@ -223,7 +224,26 @@ function looksLikeRateLimit(msg: string | null): boolean {
   return /429|rate limit|throttl|too many requests/i.test(msg);
 }
 
+function mockPrizeProgressLamports(now = Date.now()): string {
+  const target = BigInt(config.mockPrizeLamports || "0");
+  const s = appState.currentRound.startedAt;
+  const e = appState.currentRound.endsAt;
+  const span = e - s;
+  if (target <= 0n) return "0";
+  if (appState.systemStatus !== "running" || appState.currentRound.roundId < 1 || span <= 0) return "0";
+  if (now <= s) return "0";
+  if (now >= e) return target.toString();
+  const elapsed = BigInt(now - s);
+  const total = BigInt(span);
+  return ((target * elapsed) / total).toString();
+}
+
 export async function refreshPrizeEstimate() {
+  if (!isLivePrizeEnabled()) {
+    appState.estimatedPrize = { amount: mockPrizeProgressLamports(), currency: "SOL" };
+    appState.prizeFetchError = null;
+    return;
+  }
   const prize = await estimatePrizeLamports();
   appState.estimatedPrize = { amount: prize.amount, currency: "SOL" };
   appState.prizeFetchError = prize.error;
