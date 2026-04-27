@@ -18,3 +18,9 @@ export const SOLSCAN_CLUSTER = process.env.NEXT_PUBLIC_SOLSCAN_CLUSTER ?? "devne
 export function solscanTx(sig: string) {
   return `https://solscan.io/tx/${sig}?cluster=${SOLSCAN_CLUSTER}`;
 }
+
+export function solscanToken(mint: string) {
+  const m = mint.trim();
+  if (!m) return `https://solscan.io/?cluster=${SOLSCAN_CLUSTER}`;
+  return `https://solscan.io/token/${encodeURIComponent(m)}?cluster=${SOLSCAN_CLUSTER}`;
+}
