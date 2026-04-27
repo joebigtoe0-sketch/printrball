@@ -56,6 +56,7 @@ async function emitHolderDiffs(prev: EligibleWallet[], next: EligibleWallet[], r
 }
 
 let prevEligible: EligibleWallet[] = [];
+let mockScheduleArmedAtMs: number | null = null;
 
 export async function executeDraw(): Promise<void> {
   const roundId = appState.currentRound.roundId;
@@ -199,6 +200,7 @@ export async function activateFirstRoundAt(start: number) {
   if (appState.systemStatus !== "scheduled") return;
   appState.systemStatus = "running";
   appState.scheduledStartMs = null;
+  mockScheduleArmedAtMs = null;
   setPhase("live");
   setRoundWindow(1, start, start + config.roundLengthMs);
   const r = loadRuntime();
@@ -224,8 +226,10 @@ function looksLikeRateLimit(msg: string | null): boolean {
   return /429|rate limit|throttl|too many requests/i.test(msg);
 }
 
-const MOCK_MIN_SOL_LAMPORTS = 15_000_000_000n; // 15 SOL
-const MOCK_MAX_SOL_LAMPORTS = 30_000_000_000n; // 30 SOL
+const MOCK_MIN_SOL_FULL = 15; // full 15m window
+const MOCK_MAX_SOL_FULL = 30; // full 15m window
+const MOCK_MIN_SOL_SHORT = 10; // very short pre-start window
+const MOCK_MAX_SOL_SHORT = 20; // very short pre-start window
 
 function pseudoUnit(seed: number): number {
   // Deterministic pseudo-random in [0,1) so target stays stable within a round.
@@ -233,26 +237,38 @@ function pseudoUnit(seed: number): number {
   return x - Math.floor(x);
 }
 
-function roundMockTargetLamports(roundKey: number): bigint {
-  const span = MOCK_MAX_SOL_LAMPORTS - MOCK_MIN_SOL_LAMPORTS;
+function solToLamports(sol: number): bigint {
+  return BigInt(Math.round(sol * 1e9));
+}
+
+function roundMockTargetLamports(roundKey: number, readiness: number): bigint {
+  // readiness in [0,1]: 1 means full 15m runway (15-30 SOL), 0 means very short runway (10-20 SOL).
+  const r = Math.max(0, Math.min(1, readiness));
+  const minSol = MOCK_MIN_SOL_SHORT + (MOCK_MIN_SOL_FULL - MOCK_MIN_SOL_SHORT) * r;
+  const maxSol = MOCK_MAX_SOL_SHORT + (MOCK_MAX_SOL_FULL - MOCK_MAX_SOL_SHORT) * r;
+  const minLamports = solToLamports(minSol);
+  const maxLamports = solToLamports(maxSol);
+  const span = maxLamports - minLamports;
   const u = pseudoUnit(roundKey);
-  return MOCK_MIN_SOL_LAMPORTS + BigInt(Math.floor(Number(span) * u));
+  return minLamports + BigInt(Math.floor(Number(span) * u));
 }
 
 function mockPrizeProgressLamports(now = Date.now()): string {
   let s = 0;
   let e = 0;
   let roundKey = 0;
+  let readiness = 1;
 
   if (appState.systemStatus === "running" && appState.currentRound.roundId >= 1) {
     s = appState.currentRound.startedAt;
     e = appState.currentRound.endsAt;
     roundKey = appState.currentRound.roundId;
   } else if (appState.systemStatus === "scheduled" && appState.scheduledStartMs != null) {
-    // Pre-round accumulation preview: rewards keep accruing before the first round arms.
+    // Pre-round accumulation preview starts at the exact admin "Start" click.
     e = appState.scheduledStartMs;
-    s = e - config.roundLengthMs;
+    s = mockScheduleArmedAtMs ?? now;
     roundKey = 0;
+    readiness = Math.max(0, Math.min(1, (e - s) / config.roundLengthMs));
   } else {
     return "0";
   }
@@ -261,7 +277,7 @@ function mockPrizeProgressLamports(now = Date.now()): string {
   if (span <= 0) return "0";
   if (now <= s) return "0";
 
-  const target = roundMockTargetLamports(roundKey);
+  const target = roundMockTargetLamports(roundKey, readiness);
   if (now >= e) return target.toString();
 
   const t = Math.max(0, Math.min(1, (now - s) / span));
@@ -337,6 +353,7 @@ export async function initRoundEngine() {
     if (now < s) {
       appState.systemStatus = "scheduled";
       appState.scheduledStartMs = s;
+      mockScheduleArmedAtMs = now;
       setRoundWindow(0, 0, s);
       setPhase("live");
     } else {
@@ -354,6 +371,7 @@ export async function initRoundEngine() {
   } else {
     appState.systemStatus = "off";
     appState.scheduledStartMs = null;
+    mockScheduleArmedAtMs = null;
     setRoundWindow(0, 0, 0);
     setPhase("live");
   }
@@ -409,6 +427,7 @@ export async function startRoundSystemFromAdmin(): Promise<{ nextBoundary: numbe
   await saveRuntime(nextR);
   appState.systemStatus = "scheduled";
   appState.scheduledStartMs = next;
+  mockScheduleArmedAtMs = Date.now();
   setPhase("live");
   setRoundWindow(0, 0, next);
   return { nextBoundary: next, error: null };
