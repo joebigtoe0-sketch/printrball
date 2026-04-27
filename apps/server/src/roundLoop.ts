@@ -224,18 +224,50 @@ function looksLikeRateLimit(msg: string | null): boolean {
   return /429|rate limit|throttl|too many requests/i.test(msg);
 }
 
+const MOCK_MIN_SOL_LAMPORTS = 15_000_000_000n; // 15 SOL
+const MOCK_MAX_SOL_LAMPORTS = 30_000_000_000n; // 30 SOL
+
+function pseudoUnit(seed: number): number {
+  // Deterministic pseudo-random in [0,1) so target stays stable within a round.
+  const x = Math.sin(seed * 12_989.127 + 78.233) * 43_758.5453;
+  return x - Math.floor(x);
+}
+
+function roundMockTargetLamports(roundKey: number): bigint {
+  const span = MOCK_MAX_SOL_LAMPORTS - MOCK_MIN_SOL_LAMPORTS;
+  const u = pseudoUnit(roundKey);
+  return MOCK_MIN_SOL_LAMPORTS + BigInt(Math.floor(Number(span) * u));
+}
+
 function mockPrizeProgressLamports(now = Date.now()): string {
-  const target = BigInt(config.mockPrizeLamports || "0");
-  const s = appState.currentRound.startedAt;
-  const e = appState.currentRound.endsAt;
+  let s = 0;
+  let e = 0;
+  let roundKey = 0;
+
+  if (appState.systemStatus === "running" && appState.currentRound.roundId >= 1) {
+    s = appState.currentRound.startedAt;
+    e = appState.currentRound.endsAt;
+    roundKey = appState.currentRound.roundId;
+  } else if (appState.systemStatus === "scheduled" && appState.scheduledStartMs != null) {
+    // Pre-round accumulation preview: rewards keep accruing before the first round arms.
+    e = appState.scheduledStartMs;
+    s = e - config.roundLengthMs;
+    roundKey = 0;
+  } else {
+    return "0";
+  }
+
   const span = e - s;
-  if (target <= 0n) return "0";
-  if (appState.systemStatus !== "running" || appState.currentRound.roundId < 1 || span <= 0) return "0";
+  if (span <= 0) return "0";
   if (now <= s) return "0";
+
+  const target = roundMockTargetLamports(roundKey);
   if (now >= e) return target.toString();
-  const elapsed = BigInt(now - s);
-  const total = BigInt(span);
-  return ((target * elapsed) / total).toString();
+
+  const t = Math.max(0, Math.min(1, (now - s) / span));
+  // Ease-out curve: grows faster at start, slower near end.
+  const eased = 1 - (1 - t) ** 2;
+  return BigInt(Math.floor(Number(target) * eased)).toString();
 }
 
 export async function refreshPrizeEstimate() {
