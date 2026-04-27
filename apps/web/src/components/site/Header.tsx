@@ -1,6 +1,6 @@
 "use client";
 
-import { API_BASE, printrTradeUrl } from "@/lib/env";
+import { API_BASE, GITHUB_REPO_URL, printrTradeUrl } from "@/lib/env";
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
@@ -37,6 +37,9 @@ export function Header({ live }: { live: boolean }) {
           <Link className="nav-bracket" href="/verify">
             <span className="br">[</span>VERIFY<span className="br">]</span>
           </Link>
+          <a className="nav-bracket" href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+            <span className="br">[</span>GITHUB<span className="br">]</span>
+          </a>
           <span className="brand-divider" />
           <a className="ticker-pill" href={tradeHref} target="_blank" rel="noreferrer">
             $BALL
