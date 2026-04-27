@@ -312,6 +312,10 @@ a { color: inherit; text-decoration: none; }
   .quick-steps-wrap {
     padding: 34px 0 38px;
   }
+  .quick-step-title {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+  }
 }
 
 /* ── Contract strip (below header) ───────────────────────────────────── */
@@ -469,7 +473,7 @@ a { color: inherit; text-decoration: none; }
 
 .quick-step-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   margin-bottom: 6px;
 }
@@ -487,11 +491,17 @@ a { color: inherit; text-decoration: none; }
 }
 
 .quick-step-title {
+  display: block;
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 1.25;
   letter-spacing: 0.1em;
   color: var(--text-primary);
   text-transform: uppercase;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .quick-step-text {
