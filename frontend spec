@@ -1,0 +1,279 @@
+Frontend & Design Spec — v1
+Project: PRINTR Powerball — public-facing site for a 15-minute on-chain raffle.
+Audience: Design / frontend agent. The backend spec defines the data; this doc defines how it's shown.
+v1 scope: the site is read-only — no wallet connection, no user accounts, no inputs. The frontend polls a few REST endpoints and renders. Equal odds for every eligible wallet (no weighting in v1).
+
+1. Brand & Vibe
+This is a lottery, but degenerate-crypto-flavored and radically transparent. Two energies in tension that we want both of:
+
+Hype — countdown timers, big numbers, winners flashing across the screen, that "next round in 4:23" anticipation.
+Trust — every claim backed by a tx hash you can click. No marketing fluff. The site looks like it was built by people who understand the chain.
+
+Reference points (vibe, not copy):
+
+Pump.fun / PRINTR's own aesthetic — crypto-native, no corporate polish
+Polymarket — data-dense but readable, every number sourced
+Stake.com / Rollbit — the lottery hype motion language
+Etherscan — the trust language: monospace addresses, raw data, link-everything
+
+Avoid: Web3 startup template look (gradient-on-purple-on-glassmorphism), generic SaaS pastels, anything that feels like a Stripe landing page.
+
+2. Visual Language
+Theme
+Dark first, always. Light mode is optional polish, not a priority.
+Color palette
+Background base    #0A0B0F   (almost black, slight blue)
+Surface 1          #12141A   (cards)
+Surface 2          #1A1D26   (raised cards, modals)
+Border subtle      #232733
+Border emphasis    #2F3441
+
+Text primary       #F5F6FA
+Text secondary     #9BA1B0
+Text muted         #5A6072
+
+Accent — win/gold     #FFC940   (winners, prize pool, the main accent)
+Accent — live/green   #00E59D   (live indicators, "eligible", positive deltas)
+Accent — alert/red    #FF4D5E   (drops, warnings, sells)
+Accent — cool/violet  #8B5CF6   (secondary, links, info)
+Gold is the hero color — use sparingly so it stays special. Reserve it for the prize amount, the winner reveal, and the countdown when it goes under 60s.
+Typography
+
+Display / headings: sharp geometric sans — Space Grotesk, Geist, or Satoshi. Heavy weights (600–800) for big numbers.
+Body: Inter or Geist Sans, 14–16px.
+Mono (addresses, tx hashes, numbers in tables): JetBrains Mono, Geist Mono, or IBM Plex Mono. Tabular figures on for any countdown or amount.
+
+Two font families maximum. Hierarchy via weight + size, not new fonts.
+Iconography
+Lucide or Phosphor. Line style, 1.5px stroke.
+Motion principles
+
+Numbers count up, never just appear (tween for prize pool, holder counts)
+Live elements pulse subtly to signal real-time-ness — single green dot at 1s cadence
+Round transitions feel like a slot machine settling — quick build, satisfying snap, no long Lottie animations
+prefers-reduced-motion respected — kill pulses and counters, keep transitions
+
+
+3. Page Structure
+Single-page app. Three primary regions stacked on desktop, all stacking vertically on mobile.
+┌─────────────────────────────────────────────────────────┐
+│  HEADER                                                  │
+│  [Logo] [Token: $TICKER]                       [Verify] │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│              HERO — NEXT DRAW                            │
+│         ┌───────────────────────────────┐               │
+│         │     PRIZE POOL (estimated)    │               │
+│         │     ◆ 4.231 SOL ($812)        │               │
+│         │                               │               │
+│         │     NEXT DRAW IN              │               │
+│         │     ⏱  04 : 23                │               │
+│         │                               │               │
+│         │     127 wallets eligible      │               │
+│         │     Each has 1-in-127 odds    │               │
+│         └───────────────────────────────┘               │
+│                                                          │
+├──────────────────────────────┬──────────────────────────┤
+│                              │                          │
+│   LEADERBOARD                │   LIVE ACTIVITY          │
+│   (eligible wallets)         │   (event feed)           │
+│                              │                          │
+│                              │                          │
+├──────────────────────────────┴──────────────────────────┤
+│                                                          │
+│   RECENT WINNERS                                         │
+│                                                          │
+├─────────────────────────────────────────────────────────┤
+│   STATS STRIP                                            │
+│   Total paid · Rounds · Biggest win · Unique winners    │
+├─────────────────────────────────────────────────────────┤
+│   FOOTER  [How it works] [Verify a round] [Contract]    │
+└─────────────────────────────────────────────────────────┘
+
+4. Component Specs
+4.1 Header
+
+Slim, ~64px tall
+Left: logo + token ticker (clickable → contract on Solscan in new tab)
+Right: "Verify" link (opens verify page)
+1px bottom border Border subtle
+
+No wallet button. No connect anything.
+4.2 Hero — Next Draw
+The biggest, loudest thing on the page.
+Layout: Centered card, max-width ~720px desktop, full-width minus 16px gutter on mobile.
+Inside:
+
+Prize pool (estimated) — small uppercase label Text muted ("PRIZE POOL · ESTIMATED"), value massive (clamp(48px, 8vw, 96px)) in gold, mono digits, ticking up live as fees accrue. Show native (SOL or whatever the token is) with USD equivalent below in Text secondary. The "estimated" label matters — fees are pulled from PRINTR at draw time so the live number is an estimate of what we'll actually claim.
+Countdown timer — equally big or bigger. MM : SS format. Text primary until 60s remaining, then gold, then red at 10s. Ticks every second with a tiny scale pulse on the seconds digit.
+Eligible count — Text secondary, with the live green pulse dot. "127 wallets in the running."
+Odds line — directly under count, in Text muted: "Each has 1-in-127 odds" — calculated as 1 / eligibleCount. This is THE feature that explains v1's fairness in one line.
+
+Edge state — drawing: when timer hits 0, card transitions to "DRAWING…" state. Replace timer with loading shimmer. When result arrives (frontend detects via the next poll cycle when a new round starts and a winner appears in /api/history), animate to a winner reveal: address + prize, gold gradient sweep, then countdown resets to 15:00.
+Edge state — rolled over: "No eligible holders this round — prize rolls over."
+Edge state — drawing failed: "Round complete · payout pending" with a muted yellow indicator. This will resolve once the backend retries succeed.
+4.3 Leaderboard
+Competitive surface. People will refresh this.
+Columns (desktop):
+#WalletHoldingsOdds
+
+# — order by holdings descending. Top has a tiny gold flame.
+Wallet — 0xab..3344 mono, copy-on-click → toast "Copied".
+Holdings — formatted percentage 1.43% plus raw token amount in Text muted below.
+Odds — for v1 this is just 1 / eligibleCount, same for everyone. Display as 0.79% or 1 in 127. Since it's identical for every row, consider making this a header-level stat instead of a per-row column to avoid visual noise. [DECIDE] Recommendation: show it once at the top of the leaderboard, drop the per-row column. Then the table is just # | Wallet | Holdings.
+
+Mobile: card list. Each card: wallet, holdings (big), rank (small).
+Real-time behavior:
+
+Frontend polls /api/state every 2–3s.
+Diff the eligible list:
+
+New wallet → row slides in from bottom with green flash
+Wallet drops → row flashes red, slides out
+Re-rank → use FLIP animation (swap positions smoothly, don't re-render)
+
+
+Throttle re-renders to ~500ms.
+
+Header controls:
+
+Search box (filter by wallet prefix)
+Pagination — top 50 default, "Load more" or virtual scroll
+
+4.4 Live Activity Feed
+Trust surface. Stream of events from /api/activity.
+Layout: vertical list, newest on top. Sticky header "Live" with the green pulse dot. Auto-scroll-to-top on new events unless user has scrolled down (then show "↑ 3 new" pill).
+Event row anatomy:
+[icon]  [primary text]                         [relative time]
+        [secondary text · tx link if any]
+Event styles:
+EventIconToneExample textround_started⊕ playneutral"Round #1429 started"holder_joined↑ trending-upgreen"0xab..3344 became eligible — 0.34% of supply"holder_dropped↓ trending-downred"0x88..f320 dropped out — sold below threshold"round_drawn🎲 dicegold"Round #1428 drawn — winner 0xab..3344" + tx linkfees_claimed◆ diamondgold"Claimed ◆ 4.23 SOL from PRINTR" + tx linkpayout_sent✦ sparklegold"Sent ◆ 4.23 SOL to winner" + tx linkpayout_failed⚠ alertred"Payout failed, retrying…"round_void— minusmuted"Round #1430 void — no eligible holders, prize rolls over"
+Every tx hash links to Solscan (new tab) with an external-link glyph after.
+Frontend polls /api/activity?limit=50 every 5s. Append new entries (matched by id).
+4.5 Recent Winners
+Showcase. Celebratory.
+Desktop: horizontal grid, 4–5 cards.
+Mobile: horizontal scroll (snap), one card visible + peek of next.
+Card:
+
+Top: round number #1428 small + muted, timestamp relative ("4 min ago")
+Middle: prize amount, gold, large mono — "◆ 4.23 SOL"
+Wallet: 0xab..3344 mono, with "view payout" link → tx on Solscan
+Bottom: "drawn from N eligible wallets" — context for the win
+
+Optional: subtle confetti micro-animation on the most recent winner for first 30s after draw.
+4.6 Stats Strip
+Horizontal row of 4 stats. Counter-up on first paint, fed by /api/stats.
+Total paid out · Rounds completed · Biggest single win · Unique winners
+Each: label (Text muted, small uppercase tracking-wide) + value (Text primary, mono, large).
+4.7 Verify Page (/round/:id or /verify/:id)
+Critical for credibility. Bare and data-heavy on purpose.
+Sections:
+
+Round summary — id, started/ended, status, prize, winner, links to claim & payout txs
+Randomness —
+
+Seed (hex), as recorded by the server at draw time
+Source: crypto.randomBytes (server-side)
+A short, honest note: "v1 randomness is server-side. We publish the seed and full eligible list so the math is reproducible. v2 will move randomness on-chain."
+
+
+Snapshot — the eligible wallet list at draw time, in deterministic sorted order. Downloadable as CSV.
+Selection walkthrough — show the math:
+
+   seed (hex)         = 7a3f9c12d4e5...
+   seed mod 127       = 42
+   eligibleWallets[42] = 0xab..3344  ← winner
+
+Verify yourself — link to a public gist with a 10-line script that takes a round id and reproduces the winner from the published seed and snapshot.
+
+Style this page like a block explorer: dense, monospace where appropriate, no decoration. The seriousness is the design.
+4.8 "How it works" page or modal
+Plain-language explanation:
+
+Eligibility: hold > 0.2% of supply
+15-minute rounds
+v1 odds: equal chance for every eligible wallet (1 / N)
+Where the prize money comes from: PRINTR fees from the creator wallet
+Randomness: server-side crypto.randomBytes. Seed and eligible list published per round so the math is reproducible. v2 will move on-chain.
+What happens if you sell, no eligible holders, etc.
+
+Keep under 600 words. Link to the verify page and the public algorithm. Be honest about the v1 randomness limitation — it's better to flag it ourselves than to have a skeptic on Twitter point it out first.
+
+5. Interaction & Motion Details
+
+Copy address: click any address → toast "Copied" bottom-center, 1.5s
+Hover any wallet: tooltip shows holdings · last seen eligible · win history if in the indexed data
+Round transition: 0.5s sequence — timer goes red → "DRAWING" shimmer → 1.5s suspense → winner card scales in with gold sweep → feed gets new entries → countdown resets. Should feel like one continuous beat, not a page reload.
+Connection indicator: tiny "Live" badge in the header with the pulse dot. If polling fails repeatedly, replace with "Reconnecting…" in muted yellow.
+
+
+6. Responsive Behavior
+Breakpoints:
+
+< 640px — mobile, single column, hero compacts (timer and pool stack), leaderboard becomes card list
+640–1024px — tablet, hero stays prominent, leaderboard and activity stack vertically
+> 1024px — desktop, two-column leaderboard + activity, full hero
+
+The hero must be fully visible above the fold on a 375px-wide phone. Test on iPhone SE size first.
+
+7. Empty & Error States
+
+No data yet (first launch) — leaderboard: "No eligible holders yet — be the first to qualify by holding 0.2% of supply." Activity feed: "Waiting for the first event…"
+Polling fails — fall back to slower retry (10s, then 30s). Show muted yellow "Reconnecting" indicator.
+API down entirely — full-page error: "We're having trouble loading the data. The smart contract is unaffected. Try again in a moment." Retry button.
+Round void — hero says "No eligible holders this round — prize rolls over." Activity feed gets round_void entry.
+
+
+8. Accessibility
+
+Color contrast meets WCAG AA on all text. Verify each gold/dark combination.
+Keyboard-reachable interactions, visible focus rings (2px gold offset).
+Screen reader: countdown announced every minute (not every second); winner announcement uses aria-live="polite".
+prefers-reduced-motion — pulses off, counter-ups instant, transitions become opacity fades.
+Text resizable to 200% without breaking layout.
+Don't rely on color alone — every green/red event has an icon too.
+
+
+9. Performance Budget
+
+Initial JS bundle under 200KB gzipped on the landing route. Code-split the verify page.
+First Contentful Paint < 1.5s on a mid-tier mobile.
+Lighthouse perf score ≥ 90.
+Polling cadence: /api/state every 2–3s, /api/activity every 5s, /api/stats every 30s. Pause polling when tab is hidden (document.visibilityState).
+Use requestAnimationFrame for the countdown, not setInterval.
+
+
+10. Tech Suggestions ([DECIDE])
+
+Framework: Next.js (App Router) or Vite + React. Next.js is helpful if you want SSR for the verify page so it indexes nicely.
+Styling: Tailwind CSS. Set up the palette as CSS vars + Tailwind theme extensions.
+State: React Query (or SWR) handles all the polling cleanly with built-in retry and stale-while-revalidate. Native useState for the rest.
+Animation: Framer Motion for FLIP reorder + countdown pulses. Don't overuse it.
+Number formatting: Intl.NumberFormat, plus a counter-up hook for animated changes.
+
+
+11. Copy Tone
+
+Confident, terse, slightly degen but never exclusionary
+"Hold to win" not "Participate in our innovative reward distribution mechanism"
+Numbers do most of the talking — copy gets out of the way
+Use the project token's ticker, not "the token", everywhere
+Never say "guaranteed". "Drawn every 15 minutes" is fine; "guaranteed payout" is not
+
+Examples:
+
+✅ "Hold 0.2% of supply. Win every 15 minutes."
+✅ "Sell before the draw and you're out."
+❌ "Join the most innovative reward ecosystem on Solana."
+❌ "Earn passive income with our revolutionary protocol."
+
+
+12. Open Questions for the Owner
+
+Logo / token branding — exists yet? If not, design agent should propose 2–3 directions.
+Token ticker and contract address — needed for header and Solscan links.
+Domain — affects metadata, OG images, etc.
+PRINTR badge in footer — yes/no?
+Twitter/X — handle for share buttons after a winner is drawn?
+OG image / share card for winner draws — recommended yes, auto-generated per round.

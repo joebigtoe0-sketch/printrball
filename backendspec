@@ -1,0 +1,338 @@
+Backend & Logic Spec — v1
+Project: PRINTR Powerball — a 15-minute on-chain raffle for holders of a Solana token launched on PRINTR.
+Audience: Engineering agent. This is the v1 spec — explicitly scoped small. Many "nice-to-haves" are deferred. Where a decision is left to you, it's marked [DECIDE]. Where something must be confirmed against external docs (PRINTR SDK, RPC provider), it's marked [VERIFY].
+
+1. Concept (v1 simplified)
+Every 15 minutes, one wallet that holds more than 0.2% of total supply at draw time is selected at random. That wallet receives 100% of the trading fees earned by the token's creator wallet on PRINTR over the round.
+v1 simplifications:
+
+Equal odds for everyone eligible. No weighting by holdings, no streak boost. (We'll add weighting in v2.)
+No wallet connection on the site — the frontend is read-only.
+No database — round history lives in a JSON file on disk; live state lives in memory.
+
+If a wallet drops below 0.2% before the draw, they're simply not in the snapshot when the draw runs.
+Everything must still be publicly auditable: random seed source, holder snapshot, winner pick, fee claim transaction, and payout transaction.
+
+2. Architecture
+One Node.js (TypeScript) process. That's it.
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│    ┌──────────────┐      ┌──────────────────┐   │
+│    │ Round Engine │─────▶│  In-memory state │   │
+│    │  (15min loop)│      │  (current round) │   │
+│    └──────┬───────┘      └────────┬─────────┘   │
+│           │                       │              │
+│           ▼                       ▼              │
+│    ┌──────────────┐      ┌──────────────────┐   │
+│    │ Helius API   │      │ history.json     │   │
+│    │ (get holders)│      │ (past rounds)    │   │
+│    └──────────────┘      └──────────────────┘   │
+│           │                                      │
+│           ▼                                      │
+│    ┌──────────────┐      ┌──────────────────┐   │
+│    │ PRINTR SDK   │      │ HTTP server      │   │
+│    │ (claim fees) │      │ (REST endpoints) │   │
+│    └──────┬───────┘      └────────┬─────────┘   │
+│           ▼                       ▼              │
+│    ┌──────────────┐         (frontend polls)    │
+│    │ Solana web3  │                              │
+│    │ (transfer)   │                              │
+│    └──────────────┘                              │
+└─────────────────────────────────────────────────┘
+Stack:
+
+Node.js + TypeScript
+@solana/web3.js and @solana/spl-token for chain interaction
+@meteora-ag/dynamic-bonding-curve-sdk for pre-graduation fee claims
+@meteora-ag/cp-amm-sdk for post-graduation (DAMM v2) fee claims
+Helius RPC for the holder list (getTokenAccounts by mint) [VERIFY]
+Plain fs for history.json
+Express or Fastify for the HTTP API
+No DB. No WebSockets. No Redis. No queue. Frontend polls every few seconds.
+
+
+3. State
+In memory (lost on restart, that's fine for v1)
+tstype AppState = {
+  currentRound: {
+    roundId: number;          // sequential
+    startedAt: number;        // unix ms
+    endsAt: number;           // startedAt + 15min
+    eligibleWallets: string[];// updated every poll cycle
+    totalSupply: string;      // raw, refreshed each round
+  };
+  estimatedPrize: string;     // unclaimed PRINTR fees, refreshed periodically
+};
+On disk (./data/history.json)
+Append-only array of completed rounds:
+tstype HistoricalRound = {
+  roundId: number;
+  startedAt: number;
+  endedAt: number;
+
+  // Randomness proof
+  seed: string;                 // hex, recorded at draw time
+  seedSource: 'crypto.randomBytes' | 'solana_blockhash' | 'switchboard_vrf';
+
+  // Snapshot at draw time
+  totalSupply: string;
+  eligibleWallets: string[];    // sorted, deterministic order
+
+  // Result
+  winner: string | null;        // null if zero eligible
+  prizeAmount: string;
+  prizeCurrency: 'SOL' | string;// token mint or 'SOL'
+  claimTx: string | null;
+  payoutTx: string | null;
+  status: 'paid' | 'void' | 'failed';
+};
+Write strategy: rewrite the whole file on each completed round (atomic via temp file + rename). The file stays small for a long time — 15min rounds × 24h × 365d ≈ 35k rounds/year, each entry ~1KB → ~35MB after a year. Fine. We'll switch to a real DB long before that hurts.
+A separate ./data/activity.json holds the recent activity log (capped at, say, 500 entries — older ones get rotated out).
+
+4. Holder enumeration
+Get holders
+Call Helius getTokenAccounts with the mint address. Paginate until done. [VERIFY exact endpoint shape]
+Get total supply
+Call getTokenSupply on the mint via standard Solana RPC. Cache for the round, re-read at the start of each new round (in case mint authority is still active).
+Filter for eligibility
+tsconst threshold = totalSupply * 0.002; // 0.2% as raw integer
+const eligible = holders
+  .filter(h => h.balance > threshold)
+  .filter(h => !EXCLUSION_LIST.includes(h.address))
+  .map(h => h.address)
+  .sort();  // deterministic order is critical for reproducibility
+Exclusion list
+Hard-coded constants. At minimum:
+
+The creator wallet (don't pay fees back to yourself — kills trust)
+Known LP / pool addresses (Raydium, Meteora, etc., for this token)
+The burn address: 1nc1nerator11111111111111111111111111111111
+
+Make this a config file you can update without redeploying — e.g. ./config/exclusions.json reloaded on each round.
+Polling cadence
+Refresh the eligible list every 5 seconds during a round. This is what the frontend reads. Cheap with Helius.
+
+5. Round lifecycle
+T=0:00   Round starts
+         ├── Read total supply from chain
+         ├── Append `round_started` to activity log
+         └── Begin 5s polling loop for eligible wallets
+
+T=0:00 → 14:55   Live tracking
+         └── Every 5s: fetch holders, filter, update in-memory state
+
+T=15:00  Round ends — DRAW
+         ├── Final snapshot of eligible wallets (sorted, deterministic)
+         ├── Generate seed = crypto.randomBytes(16).toString('hex')
+         ├── Pick winner: pickIndex = bigInt(seed) mod eligible.length
+         ├── If eligible.length === 0 → mark void, no payout, fees roll over
+         ├── Call PRINTR SDK to claim fees → wait for confirmation
+         ├── Transfer claimed amount to winner → wait for confirmation
+         ├── Append round to history.json (incl. seed for verification)
+         ├── Emit activity events: round_drawn, fees_claimed, payout_sent
+         └── Round N+1 starts immediately
+Timing must use absolute UTC timestamps, not setInterval. Compute the next draw time from epoch + roundId × 15min so a process restart resumes cleanly.
+Concurrency: trivially handled because there's one process and the draw happens inside one async function. Just don't accidentally start a second process pointed at the same history.json.
+
+6. Randomness (v1: simple, server-side)
+For v1 we use Node's crypto.randomBytes to pick the winner. Fast to ship, no external deps.
+At draw time:
+tsimport { randomBytes } from 'node:crypto';
+
+// 16 random bytes is overkill but cheap
+const seedBuf = randomBytes(16);
+const seedHex = seedBuf.toString('hex');
+const winnerIndex = Number(BigInt('0x' + seedHex) % BigInt(eligibleWallets.length));
+const winner = eligibleWallets[winnerIndex];
+Persist the seed to history so we can show it on the verify page alongside the snapshot. This isn't cryptographically verifiable — users have to trust we used the seed we recorded — but it's enough to make the math transparent: anyone can plug the published seed and the published eligible list into the formula and reproduce the same winner.
+Be honest about this on the "How it works" page. Something like:
+
+"Winners are selected server-side using cryptographic randomness (crypto.randomBytes). We publish the random seed and the full eligible list for every round so the math is reproducible. We're working toward fully on-chain verifiable randomness in a future version."
+
+Upgrade path: when you're ready (v2 or when prize sizes get bigger), swap this for either a future Solana blockhash commit-reveal (free, mostly verifiable) or Switchboard VRF (paid, fully verifiable). The history schema already has fields for the seed source, so the swap is contained to one function.
+
+7. Fee claim & payout
+Strategy: claim directly from Meteora, skip PRINTR's API
+PRINTR is built on top of Meteora's Dynamic Bonding Curve (DBC) program. The fees you "claim from PRINTR" actually live in a Meteora program account, and Meteora has a public, well-maintained TypeScript SDK with a documented claimCreatorTradingFee method.
+This is the better route for v1:
+
+Officially documented and open-source
+No dependency on PRINTR's API uptime, auth setup, or undocumented endpoints
+More transparent — direct on-chain interaction matches the project's ethos
+One npm install: @meteora-ag/dynamic-bonding-curve-sdk
+
+DBC program ID (mainnet & devnet): dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
+Two phases, two claim flows
+How you claim depends on whether your token has "graduated" from the bonding curve yet.
+
+Pre-graduation (token still on the bonding curve, hasn't hit the migration quote threshold) — fees accumulate in the virtual pool. Claim via client.creator.claimCreatorTradingFee() from @meteora-ag/dynamic-bonding-curve-sdk.
+Post-graduation (token migrated to a DAMM v2 pool) — DBC creates a DAMM v2 LP position on graduation, locks it, and assigns the position NFT to the creator. Fees keep accruing on that locked position and are claimed via @meteora-ag/cp-amm-sdk (the DAMM v2 SDK). Different program ID: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG.
+
+Build pre-graduation first and ship it. Add post-graduation handling before your token actually graduates — covered in the post-graduation section below.
+Pre-graduation claim sketch
+tsimport { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk';
+import { Connection, Keypair, sendAndConfirmTransaction } from '@solana/web3.js';
+
+const connection = new Connection(RPC_URL, 'confirmed');
+const client = new DynamicBondingCurveClient(connection);
+const creatorWallet = Keypair.fromSecretKey(/* env-loaded secret */);
+
+// Returns an unsigned Transaction
+const tx = await client.creator.claimCreatorTradingFee({
+  creator: creatorWallet.publicKey,
+  virtualPool: VIRTUAL_POOL_ADDRESS,
+  // [VERIFY] check exact ClaimCreatorTradingFeeParams shape against the SDK at install time
+});
+
+const claimSig = await sendAndConfirmTransaction(connection, tx, [creatorWallet]);
+The virtualPool is the on-chain account address for your token's DBC pool. Find it by:
+
+Looking at any swap on your token in Solscan — the DBC pool account is one of the accounts touched
+Querying the DBC program for accounts where baseMint == yourTokenMint
+Asking PRINTR (they create the pool when you launch)
+
+Cache it in config — it doesn't change.
+Post-graduation claim sketch (DAMM v2)
+When your token graduates, three things happen on-chain:
+
+A new DAMM v2 pool is created for the token
+The DBC virtual pool's liquidity is migrated into the DAMM v2 pool
+Position NFTs representing the locked LP are minted — one for the creator, one for the partner (PRINTR)
+
+After that, fees from trades on the new DAMM v2 pool keep accumulating on those locked positions, and the position NFT holder can claim them indefinitely.
+tsimport { CpAmm } from '@meteora-ag/cp-amm-sdk';
+
+const cpAmm = new CpAmm(connection);
+
+// [VERIFY] exact method name — likely `claimPositionFee` or similar
+const tx = await cpAmm.claimPositionFee({
+  owner: creatorWallet.publicKey,
+  position: CREATOR_POSITION_ADDRESS,
+  positionNftAccount: CREATOR_POSITION_NFT_ATA,
+  pool: DAMM_V2_POOL_ADDRESS,
+});
+
+const claimSig = await sendAndConfirmTransaction(connection, tx, [creatorWallet]);
+To find these addresses after graduation:
+
+DAMM v2 pool address — appears in the migration transaction. Watch for the migration tx (Meteora's keeper service triggers it once the curve hits threshold), or query the cp-amm program for pools where tokenAMint or tokenBMint equals your mint.
+Position NFT — minted to the creator wallet during migration. List position NFTs owned by the creator wallet via the SDK or via getTokenAccountsByOwner.
+Position account — derived from the position NFT via PDA. The SDK has helpers.
+
+Detect the transition automatically. Don't rely on knowing when graduation happens manually. Each round, check pool state:
+ts// Cheap check — if DBC pool is still active, use pre-graduation flow
+const dbcPool = await dbcClient.state.getPool(VIRTUAL_POOL_ADDRESS);
+const hasGraduated = dbcPool === null || dbcPool.isGraduated; // [VERIFY exact field]
+On first detection of hasGraduated, log a graduation_detected activity event, find the DAMM v2 pool + position NFT, cache them, and switch the claim path. From that round forward, post-graduation flow is used.
+Likely fee currency: SOL
+PRINTR-launched tokens almost certainly use quote-only fee collection (collect_fee_mode = OnlyB in DAMM v2 terms), which is the standard launchpad config — it means trading fees come exclusively in SOL (the quote token), not in the project token. Confirm by reading the pool config after launch, but plan your payout logic for SOL transfers as the default case.
+Sequence at draw time
+
+Pre-flight — read claimable fees from the pool state. The SDK exposes pool fee state via something like client.state.getPoolFees(virtualPool) [VERIFY exact name]. If unclaimed = 0, mark round void, no payout, fees keep accruing for next round.
+Claim — build the claim tx, sign with creator wallet, submit, confirm. Store claimTx. Retry up to 3x with exponential backoff on failure, then mark round failed.
+Read actual amount claimed — diff the creator wallet's balance before vs after the claim confirms (or parse it from tx metadata). This is the prize amount.
+Compute payout — claimed amount minus a small SOL buffer (~0.000005 SOL) for the transfer fee. 100% of the rest goes to winner.
+Transfer — SystemProgram.transfer for SOL, or SPL transfer if fees are paid in the project token. Wait for confirmation. Store payoutTx.
+Mark round paid — write to history.json.
+
+Failure handling
+
+If claim succeeds but transfer fails → retry the transfer. The original winner is locked in; never re-pick. If permanently stuck, log loudly and add to a manual-recovery list.
+If process crashes between claim and transfer, on restart: scan history.json for the most recent round with claimTx !== null && payoutTx === null, and resume the transfer.
+If the SDK call errors out (e.g. SDK version mismatch with the on-chain program after a Meteora upgrade), the PRINTR API is the fallback — same end result via a different code path.
+
+Wallet security
+
+Creator wallet keypair lives in an env var (or, better, a file mounted with restricted permissions). Never in the repo. Never log it.
+For v1, single keypair is fine. Operationally upgrade to Squads multisig later.
+
+Open questions for owner
+
+Virtual pool address for your token (find via Solscan after launch).
+Fee currency — DBC supports collecting fees in quote token only (SOL/USDC) or in both base and quote (collect_fee_mode in pool config). Determines whether prizes are SOL or your token.
+Migration quote threshold — at what cumulative quote-token volume does the bonding curve graduate? Affects when you need to switch to the post-graduation claim flow.
+Migration target — DAMM v1 or DAMM v2? Determines which post-graduation SDK method to use later.
+
+
+8. HTTP API (read-only, the only thing the frontend uses)
+All endpoints return JSON. CORS open. No auth.
+GET /api/state
+Current round + everything the frontend needs for the homepage.
+jsonc{
+  "round": {
+    "roundId": 1429,
+    "startedAt": 1729000000000,
+    "endsAt": 1729000900000,
+    "secondsRemaining": 423
+  },
+  "eligibleWallets": [
+    { "address": "0xab..3344", "balance": "12345678", "balancePct": 0.43 },
+    /* ... */
+  ],
+  "eligibleCount": 127,
+  "totalSupply": "1000000000000",
+  "estimatedPrize": { "amount": "4231000000", "currency": "SOL" }
+}
+GET /api/history?limit=20
+Most recent N completed rounds (newest first).
+GET /api/round/:id
+Full detail for one round including the randomness proof and full participant snapshot.
+GET /api/stats
+jsonc{
+  "totalRounds": 1428,
+  "totalPaidOut": { "amount": "412345600000", "currency": "SOL" },
+  "biggestWin":   { "amount": "12340000000", "wallet": "0xab..3344", "roundId": 1287 },
+  "uniqueWinners": 312
+}
+GET /api/activity?limit=50
+Recent events (newest first):
+jsonc[
+  { "id": 9831, "ts": 1729000000000, "type": "round_started", "roundId": 1429 },
+  { "id": 9832, "ts": 1729000005000, "type": "holder_joined", "wallet": "0xab..3344" },
+  /* ... */
+]
+Event types: round_started, holder_joined, holder_dropped, round_drawn, fees_claimed, payout_sent, payout_failed, round_void.
+Frontend polling
+Frontend polls /api/state every 2–3 seconds, /api/activity every 5 seconds. That's it. No WebSocket needed for v1.
+
+9. Edge cases
+
+Zero eligible holders at draw → round void, no payout, fees roll into next round's pool (PRINTR keeps them; we just don't claim).
+One eligible holder → they win automatically. Still publish randomness for consistency.
+Total supply changes mid-round (mint authority active) → just re-read at the next round start. Within a round, use the supply we read at start.
+Same-block sell-and-rebuy → handled naturally; the snapshot is read at draw time.
+Token decimals → work in raw integer balances internally. Format only at the API boundary.
+Process restart mid-round → on boot, compute current round from (now - launchTime) / 15min. If it's a new round, start fresh. If we're mid-round, resume polling.
+Process restart between claim and transfer → see §7 failure handling.
+
+
+10. Transparency surface
+For v1, all of these come "for free" from the structure above:
+
+Algorithm published openly (link to a public gist or repo).
+Every round in history has the seed used + the full eligible list → anyone can plug them into the formula and reproduce the winner.
+Every round has claimTx and payoutTx linking to Solscan.
+Be upfront that v1 randomness is server-side (crypto.randomBytes) — the seed is published, but trusting the seed wasn't picked after seeing the eligible list requires trusting us. v2 will move to chain-based randomness.
+
+Add a single static /verify route on the frontend that reads /api/round/:id and walks the user through the math. Nothing fancy — that's covered in the design spec.
+
+11. Build order
+
+Holder fetcher — given a mint, return the eligible list. Standalone script.
+Round loop — 15min ticks, snapshots eligible list, picks a random winner with crypto.randomBytes, writes to history.json. No real payouts yet.
+HTTP API — wrap the in-memory state in REST endpoints.
+Meteora claim integration — install @meteora-ag/dynamic-bonding-curve-sdk, test claimCreatorTradingFee on devnet first, then with tiny mainnet amounts.
+Real payouts — wire the transfer step, run end-to-end with a test pool.
+Hardening — exclusion list config, restart recovery, basic monitoring.
+
+
+12. Open questions for the owner
+
+Token mint address — needed for holder fetch, exclusion list, and pool lookup.
+DBC virtual pool address — find via Solscan after launching, or ask PRINTR. Cached in config.
+Migration quote threshold — at what cumulative SOL volume does the bonding curve graduate? Visible in the pool config. Affects when the post-graduation flow needs to be ready.
+Confirm fee currency is SOL — PRINTR-launched tokens are almost certainly quote-only collection, but verify by reading the pool config after launch. If it's somehow base+quote, the payout step needs to handle SPL transfers and associated token accounts for winners.
+Creator wallet — single env-var keypair OK for v1?
+Hosting — Railway / Fly / your own VPS? Affects how the keypair is provisioned.
+RPC provider — Helius, QuickNode, Triton? (Helius recommended for the DAS holder API.)
+Exclusion list — at minimum, the Meteora pool addresses (DBC pool pre-graduation, DAMM v2 pool post-graduation). Both can be found on-chain once active.

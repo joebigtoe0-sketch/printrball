@@ -1,0 +1,38 @@
+@import "tailwindcss";
+@import "./printr-theme.css";
+
+@theme inline {
+  --color-page: var(--bg-base);
+  --color-card: var(--surface-1);
+  --color-raised: var(--surface-2);
+  --color-line: var(--border-subtle);
+  --color-line-strong: var(--border-emphasis);
+  --color-ink: var(--text-primary);
+  --color-muted: var(--text-secondary);
+  --color-faint: var(--text-muted);
+  --color-gold: var(--gold);
+  --color-live: var(--green);
+  --color-alert: var(--red);
+  --color-violet: var(--violet);
+  --font-sans: var(--font-space);
+  --font-display: var(--font-space);
+  --font-mono: var(--font-jetbrains);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+/* Base colors/typography come from printr-theme.css (body). */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
