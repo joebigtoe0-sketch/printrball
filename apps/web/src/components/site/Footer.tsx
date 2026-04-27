@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CONTRACT_URL } from "@/lib/env";
+import { CONTRACT_URL, GITHUB_REPO_URL } from "@/lib/env";
 
 export function Footer() {
   return (
@@ -10,6 +10,9 @@ export function Footer() {
           <Link href="/verify">Verify a round</Link>
           <a href={CONTRACT_URL} target="_blank" rel="noreferrer">
             Contract ↗
+          </a>
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+            Source code ↗
           </a>
         </div>
         <div className="footer-meta">PRINTRBALL · Solana · Equal-odds v1 · Not financial advice</div>

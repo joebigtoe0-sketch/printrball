@@ -1,5 +1,7 @@
 "use client";
 
+import { GITHUB_REPO_URL } from "@/lib/env";
+
 const PROGRAM_RS = [
   "// draw() runs every 15-min slot boundary",
   "pub fn select_winner(seed_hex: &str, eligible_wallets: Vec<String>) -> Option<String> {",
@@ -27,6 +29,11 @@ export function VerifyCodeCard() {
       <div className="verify-code-head">
         <h3>The exact code used for each draw.</h3>
         <p>Use this reference logic with the published seed + snapshot to independently verify winner selection.</p>
+        <p style={{ marginTop: 8 }}>
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer" className="verify-link">
+            View full repository ↗
+          </a>
+        </p>
       </div>
       <div className="verify-code-stack">
         <div className="verify-code-block">

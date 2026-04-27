@@ -12,6 +12,8 @@ export function printrTradeUrl(mint?: string | null): string {
 export const TOKEN_TICKER = process.env.NEXT_PUBLIC_TOKEN_TICKER ?? "PRINTR";
 export const CONTRACT_URL =
   process.env.NEXT_PUBLIC_CONTRACT_URL ?? "https://solscan.io";
+export const GITHUB_REPO_URL =
+  process.env.NEXT_PUBLIC_GITHUB_REPO_URL ?? "https://github.com/joebigtoe0-sketch/printrball";
 
 export const SOLSCAN_CLUSTER = process.env.NEXT_PUBLIC_SOLSCAN_CLUSTER ?? "devnet";
 
