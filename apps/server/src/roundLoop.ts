@@ -57,6 +57,8 @@ async function emitHolderDiffs(prev: EligibleWallet[], next: EligibleWallet[], r
 
 let prevEligible: EligibleWallet[] = [];
 let mockScheduleArmedAtMs: number | null = null;
+let mockCarryIntoRoundLamports: bigint = 0n;
+let mockCarryRoundId: number | null = null;
 
 export async function executeDraw(): Promise<void> {
   const roundId = appState.currentRound.roundId;
@@ -198,6 +200,14 @@ export async function checkScheduledStart() {
  */
 export async function activateFirstRoundAt(start: number) {
   if (appState.systemStatus !== "scheduled") return;
+  if (!isLivePrizeEnabled()) {
+    // Carry any pre-start mock accrual into round #1 instead of resetting to zero.
+    mockCarryIntoRoundLamports = BigInt(mockPrizeProgressLamports(start));
+    mockCarryRoundId = 1;
+  } else {
+    mockCarryIntoRoundLamports = 0n;
+    mockCarryRoundId = null;
+  }
   appState.systemStatus = "running";
   appState.scheduledStartMs = null;
   mockScheduleArmedAtMs = null;
@@ -258,11 +268,15 @@ function mockPrizeProgressLamports(now = Date.now()): string {
   let e = 0;
   let roundKey = 0;
   let readiness = 1;
+  let baseCarry = 0n;
 
   if (appState.systemStatus === "running" && appState.currentRound.roundId >= 1) {
     s = appState.currentRound.startedAt;
     e = appState.currentRound.endsAt;
     roundKey = appState.currentRound.roundId;
+    if (mockCarryRoundId === appState.currentRound.roundId) {
+      baseCarry = mockCarryIntoRoundLamports;
+    }
   } else if (appState.systemStatus === "scheduled" && appState.scheduledStartMs != null) {
     // Pre-round accumulation preview starts at the exact admin "Start" click.
     e = appState.scheduledStartMs;
@@ -278,12 +292,13 @@ function mockPrizeProgressLamports(now = Date.now()): string {
   if (now <= s) return "0";
 
   const target = roundMockTargetLamports(roundKey, readiness);
-  if (now >= e) return target.toString();
+  if (now >= e) return (baseCarry + target).toString();
 
   const t = Math.max(0, Math.min(1, (now - s) / span));
   // Ease-out curve: grows faster at start, slower near end.
   const eased = 1 - (1 - t) ** 2;
-  return BigInt(Math.floor(Number(target) * eased)).toString();
+  const gained = BigInt(Math.floor(Number(target) * eased));
+  return (baseCarry + gained).toString();
 }
 
 export async function refreshPrizeEstimate() {
@@ -372,6 +387,8 @@ export async function initRoundEngine() {
     appState.systemStatus = "off";
     appState.scheduledStartMs = null;
     mockScheduleArmedAtMs = null;
+    mockCarryIntoRoundLamports = 0n;
+    mockCarryRoundId = null;
     setRoundWindow(0, 0, 0);
     setPhase("live");
   }
@@ -428,6 +445,8 @@ export async function startRoundSystemFromAdmin(): Promise<{ nextBoundary: numbe
   appState.systemStatus = "scheduled";
   appState.scheduledStartMs = next;
   mockScheduleArmedAtMs = Date.now();
+  mockCarryIntoRoundLamports = 0n;
+  mockCarryRoundId = null;
   setPhase("live");
   setRoundWindow(0, 0, next);
   return { nextBoundary: next, error: null };

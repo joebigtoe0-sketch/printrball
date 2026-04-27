@@ -198,7 +198,7 @@ export function Hero({
             <div className="hero-bottom">
               <span className="eligible-count">
                 <span className="dot" />
-                <strong>{n}</strong> eligible (preview)
+                <strong>{n}</strong> eligible
               </span>
             </div>
             {holderErr ? (
