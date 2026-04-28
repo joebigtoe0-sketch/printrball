@@ -10,7 +10,7 @@ import {
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
-import { config, getJsonRpcUrl } from "./config.js";
+import { config, getHolderRpcUrl } from "./config.js";
 import { getEffectiveTokenMint, loadRuntime } from "./runtimeStore.js";
 
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
@@ -86,7 +86,7 @@ function setup() {
   const secret = process.env.TREASURY_PRIVATE_KEY?.trim();
   if (!secret) throw new Error("TREASURY_PRIVATE_KEY is missing");
   const wallet = parseKeypair(secret);
-  const connection = new Connection(getJsonRpcUrl(), "confirmed");
+  const connection = new Connection(getHolderRpcUrl(), "confirmed");
   const dbc = new DynamicBondingCurveClient(connection, "confirmed");
   const cpAmm = new CpAmm(connection);
   return { wallet, connection, cpAmm, dbc };
@@ -103,7 +103,7 @@ async function claimableForPosition(cpAmm: CpAmm, p: PositionLike): Promise<{ la
 async function readPrizeDebug(): Promise<PrizeReadDebug> {
   const { cpAmm, wallet, dbc } = setup();
   const mint = getEffectiveTokenMint(loadRuntime());
-  const rpcUrl = getJsonRpcUrl();
+  const rpcUrl = getHolderRpcUrl();
   const debug: PrizeReadDebug = {
     selectedSource: "none",
     amount: "0",
@@ -140,6 +140,9 @@ async function readPrizeDebug(): Promise<PrizeReadDebug> {
       debug.dbc.error = "No DBC pool found for mint";
     } catch (e) {
       debug.dbc.error = e instanceof Error ? e.message : String(e);
+      if (debug.dbc.error?.includes("accumulated scan results exceeded the limit")) {
+        debug.dbc.error = `${debug.dbc.error}. Use HOLDER_RPC_URL (Helius or provider with higher getProgramAccounts limits).`;
+      }
     }
   } else {
     debug.dbc.error = "Token mint is empty";
@@ -186,7 +189,7 @@ export async function debugPrizeRead(): Promise<PrizeReadDebug> {
       amount: config.mockPrizeLamports,
       error: "Live prize mode is disabled",
       mint: getEffectiveTokenMint(loadRuntime()),
-      rpcUrl: getJsonRpcUrl(),
+      rpcUrl: getHolderRpcUrl(),
       dbc: { attempted: false, poolAddress: null, amount: null, error: null },
       damm: { attempted: false, positions: 0, amount: null, error: null },
     };
