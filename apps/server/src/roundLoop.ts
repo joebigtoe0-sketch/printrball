@@ -347,6 +347,9 @@ export async function refreshPrizeEstimate() {
       liveRoundBaselineLamports = raw;
     }
     display = raw > liveRoundBaselineLamports ? raw - liveRoundBaselineLamports : 0n;
+  } else if (appState.systemStatus === "scheduled" && history.length === 0) {
+    // Before round #1 starts, show full currently unclaimed fees as preview.
+    display = raw;
   } else {
     liveRoundBaselineLamports = 0n;
     liveBaselineRoundId = null;
