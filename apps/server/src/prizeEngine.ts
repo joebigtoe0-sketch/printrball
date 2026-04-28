@@ -1,5 +1,6 @@
 import bs58 from "bs58";
 import BN from "bn.js";
+import { DynamicBondingCurveClient } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { CpAmm, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
 import {
   Connection,
@@ -10,6 +11,7 @@ import {
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import { config, getJsonRpcUrl } from "./config.js";
+import { getEffectiveTokenMint, loadRuntime } from "./runtimeStore.js";
 
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
 
@@ -55,8 +57,9 @@ function setup() {
   if (!secret) throw new Error("TREASURY_PRIVATE_KEY is missing");
   const wallet = parseKeypair(secret);
   const connection = new Connection(getJsonRpcUrl(), "confirmed");
+  const dbc = new DynamicBondingCurveClient(connection, "confirmed");
   const cpAmm = new CpAmm(connection);
-  return { wallet, connection, cpAmm };
+  return { wallet, connection, cpAmm, dbc };
 }
 
 async function claimableForPosition(cpAmm: CpAmm, p: PositionLike): Promise<{ lamports: BN; poolState: PoolLike }> {
@@ -70,7 +73,20 @@ async function claimableForPosition(cpAmm: CpAmm, p: PositionLike): Promise<{ la
 export async function estimatePrizeLamports(): Promise<{ amount: string; error: string | null }> {
   if (!isLivePrizeEnabled()) return { amount: config.mockPrizeLamports, error: null };
   try {
-    const { cpAmm, wallet } = setup();
+    const { cpAmm, wallet, dbc } = setup();
+    const mint = getEffectiveTokenMint(loadRuntime());
+    if (mint) {
+      try {
+        const pool = await dbc.state.getPoolByBaseMint(mint);
+        if (pool?.publicKey) {
+          const fee = await dbc.state.getPoolFeeBreakdown(pool.publicKey.toBase58());
+          return { amount: fee.creator.unclaimedQuoteFee.toString(), error: null };
+        }
+      } catch {
+        // Fall through to DAMM-v2 read if DBC pool is unavailable (e.g., post-graduation).
+      }
+    }
+
     const positions = (await cpAmm.getPositionsByUser(wallet.publicKey)) as unknown as PositionLike[];
     let total = new BN(0);
     for (const p of positions) {
@@ -86,6 +102,7 @@ export async function estimatePrizeLamports(): Promise<{ amount: string; error: 
 
 export async function claimAndPayoutWinner(
   winnerAddress: string,
+  payoutTargetLamports?: string,
 ): Promise<{ claimTx: string | null; payoutTx: string | null; prizeLamports: string; error: string | null }> {
   if (!isLivePrizeEnabled()) {
     return { claimTx: null, payoutTx: null, prizeLamports: config.mockPrizeLamports, error: null };
@@ -121,7 +138,7 @@ export async function claimAndPayoutWinner(
     const winner = new PublicKey(winnerAddress);
     const bal = BigInt(await connection.getBalance(wallet.publicKey, "confirmed"));
     const maxSendable = bal > reserveLamports ? bal - reserveLamports : 0n;
-    const target = BigInt(claimableTotal.toString());
+    const target = payoutTargetLamports != null ? BigInt(payoutTargetLamports) : BigInt(claimableTotal.toString());
     const sendAmount = target < maxSendable ? target : maxSendable;
 
     if (sendAmount <= 0n) {

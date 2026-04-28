@@ -20,6 +20,9 @@ importers:
       '@meteora-ag/cp-amm-sdk':
         specifier: ^1.4.3
         version: 1.4.3(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@meteora-ag/dynamic-bonding-curve-sdk':
+        specifier: ^1.5.7
+        version: 1.5.7(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
       '@solana/web3.js':
         specifier: ^1.98.4
         version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -537,6 +540,11 @@ packages:
 
   '@meteora-ag/cp-amm-sdk@1.4.3':
     resolution: {integrity: sha512-hnfpoh1XjpTirOanUksCVUBGQgNBZDb05oU5pvzGOp0Q8KO998giTjyOowW9Pq2xkSdBbRvxTC5NCurxVPhPew==}
+
+  '@meteora-ag/dynamic-bonding-curve-sdk@1.5.7':
+    resolution: {integrity: sha512-8U1cNnYrvpNSSeg2b5UKlvZbYZd/CzQGtRDe3atjq58Lb1nmutID3ZgjWtaPTej/fbHQJ5Q3sxwNArDkZW/BJw==}
+    peerDependencies:
+      typescript: ^5
 
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
@@ -3004,6 +3012,20 @@ snapshots:
       - encoding
       - fastestsmallesttextencoderdecoder
       - typescript
+      - utf-8-validate
+
+  '@meteora-ag/dynamic-bonding-curve-sdk@1.5.7(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)':
+    dependencies:
+      '@coral-xyz/anchor': 0.31.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@solana/spl-token': 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      bn.js: 5.2.3
+      decimal.js: 10.6.0
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - bufferutil
+      - encoding
+      - fastestsmallesttextencoderdecoder
       - utf-8-validate
 
   '@napi-rs/wasm-runtime@0.2.12':

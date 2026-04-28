@@ -59,6 +59,17 @@ let prevEligible: EligibleWallet[] = [];
 let mockScheduleArmedAtMs: number | null = null;
 let mockCarryIntoRoundLamports: bigint = 0n;
 let mockCarryRoundId: number | null = null;
+let liveRoundBaselineLamports: bigint = 0n;
+let liveBaselineRoundId: number | null = null;
+
+function toLamports(raw: string): bigint {
+  try {
+    const n = BigInt(raw);
+    return n >= 0n ? n : 0n;
+  } catch {
+    return 0n;
+  }
+}
 
 export async function executeDraw(): Promise<void> {
   const roundId = appState.currentRound.roundId;
@@ -110,8 +121,13 @@ export async function executeDraw(): Promise<void> {
   let status: HistoricalRound["status"] = "paid";
 
   if (isLivePrizeEnabled()) {
+    const rawLive = await estimatePrizeLamports();
+    const currentRaw = toLamports(rawLive.amount);
+    const baseline = liveBaselineRoundId === roundId ? liveRoundBaselineLamports : currentRaw;
+    const roundPrize = currentRaw > baseline ? currentRaw - baseline : 0n;
+
     setPhase("payout_pending");
-    const live = await claimAndPayoutWinner(winner);
+    const live = await claimAndPayoutWinner(winner, roundPrize.toString());
     claimTx = live.claimTx;
     payoutTx = live.payoutTx;
     prizeAmount = live.prizeLamports;
@@ -177,6 +193,8 @@ async function startNextRoundFrom(prevEnd: number) {
   const startedAt = prevEnd;
   const endsAt = startedAt + config.roundLengthMs;
   setRoundWindow(nextId, startedAt, endsAt);
+  liveRoundBaselineLamports = 0n;
+  liveBaselineRoundId = null;
   await appendActivity("round_started", { roundId: nextId });
 }
 
@@ -213,6 +231,8 @@ export async function activateFirstRoundAt(start: number) {
   mockScheduleArmedAtMs = null;
   setPhase("live");
   setRoundWindow(1, start, start + config.roundLengthMs);
+  liveRoundBaselineLamports = 0n;
+  liveBaselineRoundId = null;
   const r = loadRuntime();
   await saveRuntime({ ...r, scheduledStartMs: null });
   await appendActivity("round_started", { roundId: 1 });
@@ -308,7 +328,19 @@ export async function refreshPrizeEstimate() {
     return;
   }
   const prize = await estimatePrizeLamports();
-  appState.estimatedPrize = { amount: prize.amount, currency: "SOL" };
+  const raw = toLamports(prize.amount);
+  let display = 0n;
+  if (appState.systemStatus === "running" && appState.currentRound.roundId >= 1) {
+    if (liveBaselineRoundId !== appState.currentRound.roundId) {
+      liveBaselineRoundId = appState.currentRound.roundId;
+      liveRoundBaselineLamports = raw;
+    }
+    display = raw > liveRoundBaselineLamports ? raw - liveRoundBaselineLamports : 0n;
+  } else {
+    liveRoundBaselineLamports = 0n;
+    liveBaselineRoundId = null;
+  }
+  appState.estimatedPrize = { amount: display.toString(), currency: "SOL" };
   appState.prizeFetchError = prize.error;
 }
 
@@ -360,6 +392,8 @@ export async function initRoundEngine() {
     const startedAt = last.endedAt;
     const endsAt = startedAt + config.roundLengthMs;
     setRoundWindow(nextId, startedAt, endsAt);
+    liveRoundBaselineLamports = 0n;
+    liveBaselineRoundId = null;
     if (Date.now() >= endsAt) {
       await maybeAdvanceRound();
     }
@@ -371,12 +405,16 @@ export async function initRoundEngine() {
       mockScheduleArmedAtMs = now;
       setRoundWindow(0, 0, s);
       setPhase("live");
+      liveRoundBaselineLamports = 0n;
+      liveBaselineRoundId = null;
     } else {
       const w = resolveRoundOneWindow(s, now);
       appState.systemStatus = "running";
       appState.scheduledStartMs = null;
       setPhase("live");
       setRoundWindow(1, w.start, w.end);
+      liveRoundBaselineLamports = 0n;
+      liveBaselineRoundId = null;
       await saveRuntime({ ...runtime, scheduledStartMs: null });
       await appendActivity("round_started", { roundId: 1 });
       if (Date.now() >= w.end) {
@@ -389,6 +427,8 @@ export async function initRoundEngine() {
     mockScheduleArmedAtMs = null;
     mockCarryIntoRoundLamports = 0n;
     mockCarryRoundId = null;
+    liveRoundBaselineLamports = 0n;
+    liveBaselineRoundId = null;
     setRoundWindow(0, 0, 0);
     setPhase("live");
   }
@@ -447,6 +487,8 @@ export async function startRoundSystemFromAdmin(): Promise<{ nextBoundary: numbe
   mockScheduleArmedAtMs = Date.now();
   mockCarryIntoRoundLamports = 0n;
   mockCarryRoundId = null;
+  liveRoundBaselineLamports = 0n;
+  liveBaselineRoundId = null;
   setPhase("live");
   setRoundWindow(0, 0, next);
   return { nextBoundary: next, error: null };
