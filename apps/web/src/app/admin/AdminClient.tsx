@@ -17,6 +17,17 @@ type AdminStatus = {
   excludedWallets: string[];
 };
 
+type PrizeTestResult = {
+  ok: boolean;
+  tokenMint: string;
+  livePrizeEnabled: boolean;
+  livePrizeDisabledReason: string | null;
+  unclaimedLamports: string;
+  unclaimedSol: number;
+  readError: string | null;
+  readAtMs: number;
+};
+
 export function AdminClient() {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState<string | null>(null);
@@ -26,6 +37,7 @@ export function AdminClient() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [blacklistText, setBlacklistText] = useState("");
+  const [prizeTest, setPrizeTest] = useState<PrizeTestResult | null>(null);
 
   useEffect(() => {
     try {
@@ -190,6 +202,29 @@ export function AdminClient() {
           : "Started.",
       );
       void loadStatus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPrizeTest() {
+    const t =
+      token ?? (typeof window !== "undefined" ? sessionStorage.getItem(TOKEN_KEY) : null);
+    if (!t) return;
+    setMessage(null);
+    setErr(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/prize-test`, {
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      const j = (await res.json().catch(() => ({}))) as PrizeTestResult & { error?: string };
+      if (!res.ok) {
+        setErr(j.error ?? "prize test failed");
+        return;
+      }
+      setPrizeTest(j);
+      setMessage(j.readError ? "Prize test completed with read error." : "Prize test completed.");
     } finally {
       setBusy(false);
     }
@@ -370,6 +405,50 @@ export function AdminClient() {
           >
             Start (next boundary)
           </button>
+        </div>
+      </section>
+
+      <section className="panel verify-panel-spaced" style={{ maxWidth: 720 }}>
+        <div className="panel-head">
+          <span className="panel-title">
+            <span className="dot" />
+            Prize read test
+          </span>
+        </div>
+        <div className="verify-meta" style={{ padding: "0 18px 16px" }}>
+          <p className="verify-prose" style={{ marginTop: 4 }}>
+            Runs a live backend read for unclaimed rewards (same source used by prize polling) and shows raw values.
+          </p>
+          <button
+            type="button"
+            className="verify-btn"
+            style={{ marginTop: 8 }}
+            disabled={busy}
+            onClick={() => void runPrizeTest()}
+          >
+            Test unclaimed fees read
+          </button>
+          {prizeTest ? (
+            <ul
+              style={{
+                listStyle: "none",
+                margin: "12px 0 0",
+                padding: 0,
+                color: "var(--text-secondary)",
+                fontFamily: "var(--font-mono)",
+                fontSize: 12,
+                lineHeight: 1.8,
+              }}
+            >
+              <li>token mint: {prizeTest.tokenMint || "(empty)"}</li>
+              <li>live enabled: {String(prizeTest.livePrizeEnabled)}</li>
+              <li>live disabled reason: {prizeTest.livePrizeDisabledReason ?? "none"}</li>
+              <li>unclaimed lamports (raw): {prizeTest.unclaimedLamports}</li>
+              <li>unclaimed SOL: {prizeTest.unclaimedSol}</li>
+              <li>read error: {prizeTest.readError ?? "none"}</li>
+              <li>read at: {new Date(prizeTest.readAtMs).toISOString()}</li>
+            </ul>
+          ) : null}
         </div>
       </section>
 

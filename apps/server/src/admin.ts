@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "./config.js";
 import { readExclusionsFile, saveExclusions, isPlausibleSolanaAddress } from "./exclusions.js";
 import { getEffectiveTokenMint, loadRuntime, type RuntimeConfig, saveRuntime } from "./runtimeStore.js";
+import { estimatePrizeLamports, getLivePrizeStatus } from "./prizeEngine.js";
 import {
   nextFullRoundBoundaryMs,
   refreshHolders,
@@ -120,5 +121,23 @@ export async function registerAdmin(app: FastifyInstance) {
       return reply.code(400).send({ error, nextBoundary: nextBoundary || null });
     }
     return { ok: true, nextBoundary };
+  });
+
+  app.get("/api/admin/prize-test", async (req, reply) => {
+    if (!requireSession(req, reply)) return;
+    const live = getLivePrizeStatus();
+    const runtime = loadRuntime();
+    const tokenMint = getEffectiveTokenMint(runtime);
+    const prize = await estimatePrizeLamports();
+    return {
+      ok: true,
+      tokenMint,
+      livePrizeEnabled: live.enabled,
+      livePrizeDisabledReason: live.reason,
+      unclaimedLamports: prize.amount,
+      unclaimedSol: Number(prize.amount) / 1e9,
+      readError: prize.error,
+      readAtMs: Date.now(),
+    };
   });
 }
