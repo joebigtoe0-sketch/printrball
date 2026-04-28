@@ -71,6 +71,10 @@ function toLamports(raw: string): bigint {
   }
 }
 
+function useFullUnclaimedForCurrentRound(): boolean {
+  return appState.currentRound.roundId === 1 && history.length === 0;
+}
+
 export async function executeDraw(): Promise<void> {
   const roundId = appState.currentRound.roundId;
   const startedAt = appState.currentRound.startedAt;
@@ -123,7 +127,11 @@ export async function executeDraw(): Promise<void> {
   if (isLivePrizeEnabled()) {
     const rawLive = await estimatePrizeLamports();
     const currentRaw = toLamports(rawLive.amount);
-    const baseline = liveBaselineRoundId === roundId ? liveRoundBaselineLamports : currentRaw;
+    const baseline = useFullUnclaimedForCurrentRound()
+      ? 0n
+      : liveBaselineRoundId === roundId
+        ? liveRoundBaselineLamports
+        : currentRaw;
     const roundPrize = currentRaw > baseline ? currentRaw - baseline : 0n;
 
     setPhase("payout_pending");
@@ -331,7 +339,10 @@ export async function refreshPrizeEstimate() {
   const raw = toLamports(prize.amount);
   let display = 0n;
   if (appState.systemStatus === "running" && appState.currentRound.roundId >= 1) {
-    if (liveBaselineRoundId !== appState.currentRound.roundId) {
+    if (useFullUnclaimedForCurrentRound()) {
+      liveBaselineRoundId = appState.currentRound.roundId;
+      liveRoundBaselineLamports = 0n;
+    } else if (liveBaselineRoundId !== appState.currentRound.roundId) {
       liveBaselineRoundId = appState.currentRound.roundId;
       liveRoundBaselineLamports = raw;
     }
