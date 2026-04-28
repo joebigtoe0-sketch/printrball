@@ -49,7 +49,17 @@ function isWsolMint(pk: PublicKey): boolean {
 }
 
 export function isLivePrizeEnabled(): boolean {
-  return process.env.METEORA_LIVE_ENABLED === "1" && Boolean(process.env.TREASURY_PRIVATE_KEY?.trim());
+  return config.meteoraLiveEnabled && Boolean(process.env.TREASURY_PRIVATE_KEY?.trim());
+}
+
+export function getLivePrizeStatus(): { enabled: boolean; reason: string | null } {
+  if (!config.meteoraLiveEnabled) {
+    return { enabled: false, reason: "METEORA_LIVE_ENABLED is false/off" };
+  }
+  if (!process.env.TREASURY_PRIVATE_KEY?.trim()) {
+    return { enabled: false, reason: "TREASURY_PRIVATE_KEY is missing" };
+  }
+  return { enabled: true, reason: null };
 }
 
 function setup() {

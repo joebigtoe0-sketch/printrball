@@ -10,6 +10,19 @@ const repoRoot = path.join(root, "..", "..");
 dotenv.config({ path: path.join(repoRoot, ".env") });
 dotenv.config({ path: path.join(root, ".env"), override: true });
 
+function envString(name: string, fallback = ""): string {
+  return (process.env[name] ?? fallback).trim();
+}
+
+function envBool(name: string, fallback = false): boolean {
+  const raw = envString(name);
+  if (!raw) return fallback;
+  const unquoted =
+    raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw.startsWith("'") && raw.endsWith("'") ? raw.slice(1, -1) : raw;
+  const v = unquoted.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   /** Blank env (e.g. `DATA_DIR=`) must not win over default — `??` does not treat "" as missing */
@@ -31,7 +44,7 @@ export const config = {
   mockPrizeLamports: process.env.MOCK_PRIZE_LAMPORTS ?? "4231000000",
   /** Plain password for /api/admin (set in production) */
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
-  meteoraLiveEnabled: process.env.METEORA_LIVE_ENABLED === "1",
+  meteoraLiveEnabled: envBool("METEORA_LIVE_ENABLED", false),
 };
 
 /** Helius JSON-RPC URL from `HELIUS_API_KEY` + `HELIUS_NETWORK`, or null if no key. */

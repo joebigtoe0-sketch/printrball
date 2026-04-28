@@ -2,12 +2,14 @@ import type { FastifyInstance } from "fastify";
 import { appState, history, secondsRemaining } from "./state.js";
 import { loadActivity } from "./persist.js";
 import { config } from "./config.js";
+import { getLivePrizeStatus } from "./prizeEngine.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true }));
 
   app.get("/api/state", async () => {
     const eligible = appState.eligibleWallets;
+    const livePrize = getLivePrizeStatus();
     return {
       system: {
         status: appState.systemStatus,
@@ -18,6 +20,8 @@ export async function registerRoutes(app: FastifyInstance) {
         mockHolders: config.mockHolders,
         holdersSnapshotMock: appState.holdersSnapshotMock,
         holderTokenAccountCount: appState.holderTokenAccountCount,
+        livePrizeEnabled: livePrize.enabled,
+        livePrizeDisabledReason: livePrize.reason,
       },
       round: {
         roundId: appState.currentRound.roundId,
