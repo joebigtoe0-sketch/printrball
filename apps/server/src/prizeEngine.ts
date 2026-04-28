@@ -35,6 +35,26 @@ type UnclaimedLike = {
   feeTokenB: BN;
 };
 
+type PrizeReadDebug = {
+  selectedSource: "dbc" | "damm-v2" | "none";
+  amount: string;
+  error: string | null;
+  mint: string;
+  rpcUrl: string;
+  dbc: {
+    attempted: boolean;
+    poolAddress: string | null;
+    amount: string | null;
+    error: string | null;
+  };
+  damm: {
+    attempted: boolean;
+    positions: number;
+    amount: string | null;
+    error: string | null;
+  };
+};
+
 function parseKeypair(raw: string): Keypair {
   const t = raw.trim();
   if (t.startsWith("[")) {
@@ -80,34 +100,98 @@ async function claimableForPosition(cpAmm: CpAmm, p: PositionLike): Promise<{ la
   return { lamports: new BN(0), poolState };
 }
 
-export async function estimatePrizeLamports(): Promise<{ amount: string; error: string | null }> {
-  if (!isLivePrizeEnabled()) return { amount: config.mockPrizeLamports, error: null };
-  try {
-    const { cpAmm, wallet, dbc } = setup();
-    const mint = getEffectiveTokenMint(loadRuntime());
-    if (mint) {
-      try {
-        const pool = await dbc.state.getPoolByBaseMint(mint);
-        if (pool?.publicKey) {
-          const fee = await dbc.state.getPoolFeeBreakdown(pool.publicKey.toBase58());
-          return { amount: fee.creator.unclaimedQuoteFee.toString(), error: null };
-        }
-      } catch {
-        // Fall through to DAMM-v2 read if DBC pool is unavailable (e.g., post-graduation).
-      }
-    }
+async function readPrizeDebug(): Promise<PrizeReadDebug> {
+  const { cpAmm, wallet, dbc } = setup();
+  const mint = getEffectiveTokenMint(loadRuntime());
+  const rpcUrl = getJsonRpcUrl();
+  const debug: PrizeReadDebug = {
+    selectedSource: "none",
+    amount: "0",
+    error: null,
+    mint,
+    rpcUrl,
+    dbc: {
+      attempted: false,
+      poolAddress: null,
+      amount: null,
+      error: null,
+    },
+    damm: {
+      attempted: false,
+      positions: 0,
+      amount: null,
+      error: null,
+    },
+  };
 
+  if (mint) {
+    debug.dbc.attempted = true;
+    try {
+      const pool = await dbc.state.getPoolByBaseMint(mint);
+      if (pool?.publicKey) {
+        const poolAddress = pool.publicKey.toBase58();
+        debug.dbc.poolAddress = poolAddress;
+        const fee = await dbc.state.getPoolFeeBreakdown(poolAddress);
+        debug.dbc.amount = fee.creator.unclaimedQuoteFee.toString();
+        debug.selectedSource = "dbc";
+        debug.amount = debug.dbc.amount;
+        return debug;
+      }
+      debug.dbc.error = "No DBC pool found for mint";
+    } catch (e) {
+      debug.dbc.error = e instanceof Error ? e.message : String(e);
+    }
+  } else {
+    debug.dbc.error = "Token mint is empty";
+  }
+
+  debug.damm.attempted = true;
+  try {
     const positions = (await cpAmm.getPositionsByUser(wallet.publicKey)) as unknown as PositionLike[];
+    debug.damm.positions = positions.length;
     let total = new BN(0);
     for (const p of positions) {
       const { lamports } = await claimableForPosition(cpAmm, p);
       total = total.add(lamports);
     }
-    return { amount: total.toString(), error: null };
+    debug.damm.amount = total.toString();
+    debug.selectedSource = "damm-v2";
+    debug.amount = debug.damm.amount;
+    if (debug.dbc.error) {
+      debug.error = `DBC fallback: ${debug.dbc.error}`;
+    }
+    return debug;
+  } catch (e) {
+    debug.damm.error = e instanceof Error ? e.message : String(e);
+    debug.error = [debug.dbc.error, debug.damm.error].filter(Boolean).join(" | ") || "Prize read failed";
+    return debug;
+  }
+}
+
+export async function estimatePrizeLamports(): Promise<{ amount: string; error: string | null }> {
+  if (!isLivePrizeEnabled()) return { amount: config.mockPrizeLamports, error: null };
+  try {
+    const debug = await readPrizeDebug();
+    return { amount: debug.amount, error: debug.error };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { amount: "0", error: msg };
   }
+}
+
+export async function debugPrizeRead(): Promise<PrizeReadDebug> {
+  if (!isLivePrizeEnabled()) {
+    return {
+      selectedSource: "none",
+      amount: config.mockPrizeLamports,
+      error: "Live prize mode is disabled",
+      mint: getEffectiveTokenMint(loadRuntime()),
+      rpcUrl: getJsonRpcUrl(),
+      dbc: { attempted: false, poolAddress: null, amount: null, error: null },
+      damm: { attempted: false, positions: 0, amount: null, error: null },
+    };
+  }
+  return readPrizeDebug();
 }
 
 export async function claimAndPayoutWinner(

@@ -25,6 +25,20 @@ type PrizeTestResult = {
   unclaimedLamports: string;
   unclaimedSol: number;
   readError: string | null;
+  selectedSource?: "dbc" | "damm-v2" | "none";
+  rpcUrl?: string;
+  dbc?: {
+    attempted: boolean;
+    poolAddress: string | null;
+    amount: string | null;
+    error: string | null;
+  };
+  damm?: {
+    attempted: boolean;
+    positions: number;
+    amount: string | null;
+    error: string | null;
+  };
   readAtMs: number;
 };
 
@@ -445,7 +459,17 @@ export function AdminClient() {
               <li>live disabled reason: {prizeTest.livePrizeDisabledReason ?? "none"}</li>
               <li>unclaimed lamports (raw): {prizeTest.unclaimedLamports}</li>
               <li>unclaimed SOL: {prizeTest.unclaimedSol}</li>
+              <li>selected source: {prizeTest.selectedSource ?? "unknown"}</li>
+              <li>rpc: {prizeTest.rpcUrl ?? "unknown"}</li>
               <li>read error: {prizeTest.readError ?? "none"}</li>
+              <li>dbc attempted: {String(prizeTest.dbc?.attempted ?? false)}</li>
+              <li>dbc pool: {prizeTest.dbc?.poolAddress ?? "none"}</li>
+              <li>dbc amount: {prizeTest.dbc?.amount ?? "none"}</li>
+              <li>dbc error: {prizeTest.dbc?.error ?? "none"}</li>
+              <li>damm attempted: {String(prizeTest.damm?.attempted ?? false)}</li>
+              <li>damm positions: {String(prizeTest.damm?.positions ?? 0)}</li>
+              <li>damm amount: {prizeTest.damm?.amount ?? "none"}</li>
+              <li>damm error: {prizeTest.damm?.error ?? "none"}</li>
               <li>read at: {new Date(prizeTest.readAtMs).toISOString()}</li>
             </ul>
           ) : null}
