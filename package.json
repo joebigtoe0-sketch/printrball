@@ -15,6 +15,7 @@
     "build": "pnpm run -r build",
     "lint": "pnpm run -r lint"
   },
+  "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=20"
   }
